@@ -25,6 +25,7 @@ import re
 import sys
 import urllib
 import urllib2
+import base64
 try:
     import json
 except ImportError:
@@ -345,17 +346,38 @@ class JiraIter(object):
     def query_jira(ver, projects, pos):
         """send a query to JIRA and collect a certain number of issue information"""
         count = 100
+        err_count = 0
         pjs = "','".join(projects)
         jql = "project in ('%s') and fixVersion in ('%s') and resolution = Fixed" % (pjs, ver)
         params = urllib.urlencode({'jql':jql, 'startAt':pos, 'maxResults':count})
-        try:
-            resp = urllib2.urlopen("https://issues.apache.org/jira/rest/api/2/search?%s" % params)
-        except urllib2.HTTPError, err:
-            code = err.code
-            print "JIRA returns HTTP error %d: %s. Aborting." % (code, err.msg)
-            if code == 400:
-                print "Please make sure the specified projects are correct."
-            sys.exit(1)
+        while True:
+            try:
+                resp = urllib2.urlopen("https://issues.apache.org/jira/rest/api/2/search?%s" % params)
+                break
+            except urllib2.HTTPError, err:
+                code = err.code
+                if code != 401:
+                    print "JIRA returns HTTP error %d: %s. Aborting." % (code, err.msg)
+                    if code == 400:
+                        print "Please make sure the specified projects are correct."
+                    sys.exit(1)
+
+                if err_count == 0:
+                    print "JIRA Authentication required."
+                else:
+                    print "Invalid authentication given, please try again"
+                username = raw_input("JIRA Username: ")
+                password = raw_input("JIRA Password: ")
+                req = urllib2.Request("https://issues.apache.org/jira/rest/api/2/search?%s" % params)
+                base64string = base64.encodestring("%s:%s" % (username, password)).replace('\n', '')
+                req.add_header("Authorization", "Basic %s" % base64string)
+                try:
+                    resp = urllib2.urlopen(req)
+                    break
+                except urllib2.HTTPError:
+                    err_count += 1
+                    continue
+
         data = json.loads(resp.read())
         return data
 
